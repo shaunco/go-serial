@@ -425,3 +425,12 @@ func (port *windowsPort) SetWriteTimeout(t int) error {
 	}
 	return port.reconfigurePort()
 }
+
+// enableRS485 enables RS485 functionality of driver via an ioctl if the config says so
+func (port *windowsPort) enableRS485(config *RS485Config) error {
+	if !config.Enabled {
+		return &PortError{code: NoPlatformSupportForRS485, causedBy: nil}
+	}
+
+	return nil
+}

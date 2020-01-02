@@ -33,6 +33,22 @@ type unixPort struct {
 	opened      uint32
 }
 
+const (
+	rs485Enabled      = 1 << 0
+	rs485RTSOnSend    = 1 << 1
+	rs485RTSAfterSend = 1 << 2
+	rs485RXDuringTX   = 1 << 4
+	rs485Tiocs        = 0x542f
+)
+
+// rs485_ioctl_opts is used to configure RS485 options in the driver
+type rs485_ioctl_opts struct {
+	flags                 uint32
+	delay_rts_before_send uint32
+	delay_rts_after_send  uint32
+	padding               [5]uint32
+}
+
 func (port *unixPort) Close() error {
 	if !atomic.CompareAndSwapUint32(&port.opened, 1, 0) {
 		return &PortError{code: PortClosed}
@@ -306,6 +322,12 @@ func nativeOpen(portName string, mode *Mode) (*unixPort, error) {
 		port.Close()
 		return nil, err
 	}
+
+	// Enable RS485, if requested
+	if err = port.enableRS485(&mode.RS485); err != nil {
+		port.Close()
+		return nil, err
+	}	
 	
 	// This pipe is used as a signal to cancel blocking Read
 	pipe := &unixutils.Pipe{}
@@ -534,4 +556,40 @@ func (port *unixPort) acquireExclusiveAccess() error {
 
 func (port *unixPort) releaseExclusiveAccess() error {
 	return ioctl(port.handle, unix.TIOCNXCL, 0)
+}
+
+// enableRS485 enables RS485 functionality of driver via an ioctl if the config says so
+func (port *unixPort) enableRS485(config *RS485Config) error {
+	if !config.Enabled {
+		return nil
+	}
+	rs485 := rs485_ioctl_opts{
+		rs485Enabled,
+		uint32(config.DelayRtsBeforeSend / time.Millisecond),
+		uint32(config.DelayRtsAfterSend / time.Millisecond),
+		[5]uint32{0, 0, 0, 0, 0},
+	}
+
+	if config.RtsHighDuringSend {
+		rs485.flags |= rs485RTSOnSend
+	}
+	if config.RtsHighAfterSend {
+		rs485.flags |= rs485RTSAfterSend
+	}
+	if config.RxDuringTx {
+		rs485.flags |= rs485RXDuringTX
+	}
+	
+	r, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		uintptr(unixPort.handle),
+		uintptr(rs485Tiocs),
+		uintptr(unsafe.Pointer(&rs485)))
+	if errno != 0 {
+		return &PortError{code: ConfigureRS485Error, causedBy: os.NewSyscallError("SYS_IOCTL (RS485)", errno)}
+	}
+	if r != 0 {
+		return &PortError{code: ConfigureRS485Error, causedBy: errors.New("unknown error from SYS_IOCTL (RS485)")}
+	}
+	return nil
 }
