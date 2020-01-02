@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -29,16 +30,19 @@ type unixPort struct {
 	
 	closeLock   sync.RWMutex
 	closeSignal *unixutils.Pipe
-	opened      bool
+	opened      uint32
 }
 
 func (port *unixPort) Close() error {
+	if !atomic.CompareAndSwapUint32(&port.opened, 1, 0) {
+		return &PortError{code: PortClosed}
+	}
+
 	// Close port
 	port.releaseExclusiveAccess()
 	if err := unix.Close(port.handle); err != nil {
 		return err
 	}
-	port.opened = false
 
 	if port.closeSignal != nil {
 		// Send close signal to all pending reads (if any)
@@ -59,7 +63,7 @@ func (port *unixPort) Close() error {
 func (port *unixPort) Read(p []byte) (int, error) {
 	port.closeLock.RLock()
 	defer port.closeLock.RUnlock()
-	if !port.opened {
+	if atomic.LoadUint32(&port.opened) != 1 {
 		return 0, &PortError{code: PortClosed}
 	}
 
@@ -108,7 +112,7 @@ func (port *unixPort) Read(p []byte) (int, error) {
 func (port *unixPort) Write(p []byte) (int, error) {
 	port.closeLock.RLock()
 	defer port.closeLock.RUnlock()
-	if !port.opened {
+	if atomic.LoadUint32(&port.opened) != 1 {
 		return 0, &PortError{code: PortClosed}
 	}
 
@@ -208,10 +212,10 @@ func (port *unixPort) SetReadTimeout(t int) error {
 func (port *unixPort) SetReadTimeoutEx(t, i uint32) error {
 	port.closeLock.RLock()
 	defer port.closeLock.RUnlock()
-	if !port.opened {
-		return &PortError{code: PortClosed}
+	if atomic.LoadUint32(&port.opened) != 1 {
+		return 0, &PortError{code: PortClosed}
 	}
-
+	
 	port.firstByteTimeout = false
 	port.readTimeout = int(t)
 	settings, err := port.getTermSettings()
@@ -265,7 +269,7 @@ func nativeOpen(portName string, mode *Mode) (*unixPort, error) {
 	}
 	port := &unixPort{
 		handle: h,
-		opened: true,
+		opened: 1,
 
 		firstByteTimeout: true,
 		readTimeout:      1000, // Backward compatible default value

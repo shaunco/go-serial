@@ -27,6 +27,7 @@ type windowsPort struct {
 	handle   syscall.Handle
 	mode     *Mode
 	timeouts *commTimeouts
+	mu 		 sync.Mutex
 }
 
 func nativeGetPortsList() ([]string, error) {
@@ -61,6 +62,11 @@ func nativeGetPortsList() ([]string, error) {
 }
 
 func (port *windowsPort) Close() error {
+	port.mu.Lock()
+	defer func() {
+		port.handle = syscall.InvalidHandle
+		port.mu.Unlock()
+	}
 	h := port.handle
 	if h == syscall.InvalidHandle {
 		return nil
