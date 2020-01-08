@@ -580,5 +580,5 @@ func (port *unixPort) enableRS485(config *RS485Config) error {
 		rs485.flags |= rs485RXDuringTX
 	}
 	
-	return ioctl(port.handle, rs485Tiocs, unsafe.Pointer(&rs485))
+	return ioctl(port.handle, rs485Tiocs, uintptr(unsafe.Pointer(&rs485)))
 }
