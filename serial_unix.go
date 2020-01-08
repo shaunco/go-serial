@@ -229,7 +229,7 @@ func (port *unixPort) SetReadTimeoutEx(t, i uint32) error {
 	port.closeLock.RLock()
 	defer port.closeLock.RUnlock()
 	if atomic.LoadUint32(&port.opened) != 1 {
-		return 0, &PortError{code: PortClosed}
+		return &PortError{code: PortClosed}
 	}
 	
 	port.firstByteTimeout = false
@@ -580,16 +580,5 @@ func (port *unixPort) enableRS485(config *RS485Config) error {
 		rs485.flags |= rs485RXDuringTX
 	}
 	
-	r, _, errno := syscall.Syscall(
-		syscall.SYS_IOCTL,
-		uintptr(unixPort.handle),
-		uintptr(rs485Tiocs),
-		uintptr(unsafe.Pointer(&rs485)))
-	if errno != 0 {
-		return &PortError{code: ConfigureRS485Error, causedBy: os.NewSyscallError("SYS_IOCTL (RS485)", errno)}
-	}
-	if r != 0 {
-		return &PortError{code: ConfigureRS485Error, causedBy: errors.New("unknown error from SYS_IOCTL (RS485)")}
-	}
-	return nil
+	return ioctl(port.handle, rs485Tiocs, unsafe.Pointer(&rs485))
 }
